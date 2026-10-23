@@ -1,10 +1,22 @@
-# RSI: Rank-1 Spectral Injection for Cross-Domain WS-VAD
+# Structure, Not Semantics — code for source-only cross-domain WS-VAD
 
-Code for the paper "Rank-1 Spectral Injection for Cross-Domain Weakly-Supervised Video Anomaly Detection".
+Code for the paper **"Structure, Not Semantics: What Transfers in Source-Only Cross-Domain
+Weakly-Supervised Video Anomaly Detection"**.
 
 ## Overview
 
-This repository contains the code for rank-1 spectral injection (RSI), a lightweight source-only augmentation for cross-domain weakly-supervised video anomaly detection (WS-VAD) on frozen CLIP features. During MIL training the method forms a rank-1 update of the lowest-scoring frames of source-normal features in the frequency domain and injects it through a normalised, RMS-matched spectral field. A gate shapes the injected spectrum, but the paper's attribution study shows the gain comes from the injection scaffold rather than from the gate's shape or from semantic direction content.
+This repository contains the code for rank-1 spectral injection (RSI), a lightweight
+source-only augmentation for cross-domain weakly-supervised video anomaly detection (WS-VAD)
+on frozen CLIP features. During MIL training the method forms a rank-1 update of the
+lowest-scoring frames of source-normal features in the frequency domain and injects it
+through a normalised, RMS-matched spectral field.
+
+The paper's contribution is an attribution study rather than a new state of the art. It
+isolates what actually transfers: the *structure* of the field — a smooth, low-pass
+perturbation aimed at the hardest source frames — and not the semantic content of the
+direction, the shape of the gate, or the rank of the perturbation. The same field is
+actively harmful on a second backbone (RTFM), reported as a negative result rather than
+hidden.
 
 ## Repository structure
 
@@ -29,6 +41,12 @@ This repository contains the code for rank-1 spectral injection (RSI), a lightwe
 │   ├── union_train.py            # Multi-source (XD+UCF) training entrypoint
 │   ├── build_union_list.py       # Merged XD+UCF training list builder
 │   ├── cross_eval.py             # Cross-domain evaluation (source ckpt -> target test)
+│   ├── rtfm_model.py             # RTFM network (second backbone, 17.9M params)
+│   ├── rtfm_eval.py              # RTFM frame scoring + pooled/within-video metrics
+│   ├── xd_train_rtfm.py          # RTFM training entrypoint (same recipe as xd_train.py)
+│   ├── rtfm_cross_eval.py        # RTFM cross-domain evaluation
+│   ├── seed_stats.py             # Aggregates runs/cross_eval_*.json into per-arm statistics
+│   ├── five_seed_stats.py        # Reproduces every number quoted in the paper's tables
 │   ├── precondition_test.py      # Precondition-probe diagnostic
 │   ├── analysis_crossdomain_transfer.py  # Direction transferability diagnostic
 │   ├── analysis_spectral_bands.py         # Temporal band diagnostic (H2)
@@ -160,6 +178,50 @@ python src/cross_eval.py --source xd --target ucf --checkpoint official
 python src/cross_eval.py --source ucf --target xd --checkpoint official
 ```
 
+### Second backbone: RTFM (paper Section 4.5)
+
+`rtfm_model.py` is a re-implementation of the RTFM network that runs on the same feature banks
+and the same training recipe as VadCLIP. The original RTFM code hard-codes a
+`batch x 10 crops x T x 512` input layout and a fixed 32-segment grid; this port keeps the
+architecture (17.9M parameters) but feeds it the same variable-length batches as `xd_train.py`,
+so the only difference between the two blocks of the paper's second-backbone table is the
+backbone itself. RTFM has a single head and selects its top-k abnormal segments by magnitude,
+so the same `--variant` flags (E5, E3, N1, ...) apply unchanged.
+
+```bash
+# Baseline and RSI field on RTFM; 30 epochs, milestones at 10/20/28
+python src/xd_train_rtfm.py --variant E5 --seed 234 --max-epoch 30 --scheduler-milestones 10 20 28
+python src/xd_train_rtfm.py --variant E3 --seed 234 --max-epoch 30 --scheduler-milestones 10 20 28
+
+# Cross-domain evaluation of an RTFM checkpoint
+python src/rtfm_cross_eval.py --target ucf --checkpoint runs/xd_rtfm30_E3_s234/<ckpt>.pth
+```
+
+The 30-epoch budget is not optional. With the shared VadCLIP schedule (`[3, 6, 10]`) the
+learning rate is already down to 1e-6 by epoch 3, which leaves RTFM undertrained and makes the
+comparison meaningless; all results in the paper use 30 epochs for both arms. RTFM's own
+baseline also varies far more across seeds than VadCLIP's (8.2 pooled AUC1 points over three
+seeds), which is why the paper reports the negative result as a sign rather than a magnitude.
+
+### Seed statistics
+
+`five_seed_stats.py` reproduces every mean, standard deviation, paired difference, exact
+one-sided sign test and percentile bootstrap interval quoted in the paper. Its input is the
+per-seed pooled AUC1 values printed by `cross_eval.py`, hard-coded so the file doubles as a
+record of what was run:
+
+```bash
+python src/five_seed_stats.py
+```
+
+`seed_stats.py` does the same aggregation directly from `runs/cross_eval_*.json`, which is what
+you want after a fresh campaign:
+
+```bash
+python src/seed_stats.py --seeds 234,555,789,222,999
+python src/seed_stats.py --drop-seeds 111 --out runs/stats.md
+```
+
 ### Multi-source (union) training
 
 ```bash
@@ -234,10 +296,28 @@ R1--R4 are the E3 method with one knob changed. There are no separate variant ID
 
 ## Key findings
 
-1. The cross-domain gain (+1.75 +- 0.74 pooled AUC on XD->UCF, mean +- s.d. over three seeds) comes from the **injection scaffold** -- the normalised, RMS-matched rank-1 spectral field -- not from semantic direction content. The gate ablation narrows it further: freezing the designed gate (E3a) or replacing it with a frozen random spectrum (E3b) leaves results statistically indistinguishable from E3 (+0.64 +- 1.17 and +0.39 +- 0.55 respectively).
-2. CLIP text class directions, when used as perturbation directions, perform at baseline; the field's assumption that they carry transferable anomaly semantics does not survive a controlled attribution.
-3. The finding is not XD/UCF-specific: training on UCF and evaluating on XD moves AP2 by +1.66 over the released UCF baseline (66.14 vs 64.48).
-4. The hardest target (ShanghaiTech) exhibits a between-video style shift that dominates the pooled metric: a trivial magnitude cue reaches 0.86 within-video AUC while pooling below chance.
+1. Over five seeds the field moves pooled AUC on XD->UCF from 0.7818 +- 0.0118 to
+   0.7958 +- 0.0185, a paired gain of **+1.40 +- 0.86** (5/5 seeds, exact one-sided sign test
+   p = 0.031, bootstrap 95% CI [+0.74, +2.04]). The gain comes from the **injection scaffold**
+   -- a smooth, RMS-matched spectral field aimed at the hardest source frames -- and not from
+   the semantic content of the direction.
+2. CLIP text class directions perform at baseline when used as perturbation directions
+   (+0.22 +- 0.49 over E5, CI [-0.16, +0.64]), and the field built from a random rank-1
+   direction beats the text-direction field by +1.19 +- 1.02 (5/5, p = 0.031). The assumption
+   that text directions carry transferable anomaly semantics does not survive the attribution.
+3. Neither the designed gate nor the rank of the perturbation is the active ingredient: with
+   three seeds, freezing the gate leaves +1.12 +- 0.57 and a frozen random spectrum leaves
+   +1.36 +- 0.76, and a rank-1 direction explains only +0.34 +- 0.50 once frame selection is
+   accounted for.
+4. The transfer is not XD/UCF-specific: training on UCF and evaluating on XD moves AP2 by
+   +1.66 over the released UCF baseline (66.14 vs 64.48).
+5. The effect does **not** generalise to a second backbone: on RTFM (30 epochs, three seeds)
+   the same field costs -7.9 pooled AUC1 (range -3.8 to -11.8), because RTFM's single head
+   selects its top-k segments by magnitude and the energy-matched field corrupts exactly that
+   statistic, while VadCLIP's second, text-anchored head does not.
+6. The hardest target (ShanghaiTech) exhibits a between-video style shift that dominates the
+   pooled metric: a trivial magnitude cue reaches 0.86 within-video AUC while pooling below
+   chance, and every arm sits below chance in both protocols.
 
 ## Citation
 

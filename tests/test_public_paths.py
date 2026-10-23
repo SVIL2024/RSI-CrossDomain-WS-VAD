@@ -37,6 +37,9 @@ ENTRYPOINTS = (
     'analysis_residual_direction', 'analysis_selective_routing',
     'analysis_selective_trust', 'analysis_spread_confound',
     'precondition_test',
+    # second backbone (Section 4.5) and the seed statistics
+    'rtfm_model', 'rtfm_eval', 'xd_train_rtfm', 'rtfm_cross_eval',
+    'seed_stats', 'five_seed_stats',
 )
 
 PATH_HELPERS = ('env_path', 'data_root', 'sht_root', 'sht_feat_root',
