@@ -296,21 +296,25 @@ R1--R4 are the E3 method with one knob changed. There are no separate variant ID
 
 ## Key findings
 
-1. Over five seeds the field moves pooled AUC on XD->UCF from 0.7818 +- 0.0118 to
-   0.7958 +- 0.0185, a paired gain of **+1.40 +- 0.86** (5/5 seeds, exact one-sided sign test
-   p = 0.031, bootstrap 95% CI [+0.69, +2.04]). The gain comes from the **injection scaffold**
-   -- a rank-1, RMS-matched spectral field aimed at the hardest source frames -- and not from
-   the semantic content of the direction.
+1. Over six seeds the field moves pooled AUC on XD->UCF from 0.7766 +- 0.0165 to
+   0.7928 +- 0.0182, a paired gain of **+1.61 +- 0.93** (6/6 seeds, exact one-sided sign test
+   p = 0.016, bootstrap 95% CI [+0.91, +2.26]). The sixth seed (777) was fixed before it was
+   run and reported whatever it showed. The gain comes from the **injection scaffold** -- an
+   RMS-matched spectral field aimed at the hardest source frames -- and not from the semantic
+   content of the direction.
 2. CLIP text class directions perform at baseline when used as perturbation directions
    (+0.22 +- 0.49 over E5, CI [-0.15, +0.65]), and the field built from a random rank-1
    direction beats the text-direction field by +1.19 +- 1.02 (5/5, p = 0.031). The assumption
    that text directions carry transferable anomaly semantics does not survive the attribution.
-3. Two structures are load-bearing, and five seeds separate them: the shared rank-1 direction
-   (+1.47 +- 2.05 against the full method, 5/5, p = 0.031, CI [+0.22, +3.28], one run
-   dominating the mean) and the lowest-score frame-selection rule (+1.00 +- 1.05, 4/5,
-   p = 0.19, CI [+0.22, +1.87]). Destroying the rank-1 structure while keeping the envelope
-   (smooth full-rank noise) returns the baseline (-0.07 +- 2.22), so smoothness alone is not
-   enough.
+3. Where the field lands is load-bearing; whether its direction must be shared is not
+   resolved. Destroying the lowest-score frame-selection rule leaves only +0.40 +- 0.66 of the
+   gain (+1.00 +- 1.05 as a paired difference against the full method, 4/5, p = 0.19,
+   CI [+0.22, +1.87]). Replacing the shared rank-1 direction with per-dimension noise of the
+   same envelope and energy (N2) is not separable from the full method (+0.91 +- 2.30 against
+   it, 5/6, p = 0.11, CI [-0.60, +2.74], within 0.1 AUC in two runs and 1.9 ahead in one) but
+   is far less stable (spread 2.75 against 0.93), and N2 is no better than the baseline
+   (+0.71 +- 2.75). Read plainly: the shared direction is what makes the effect reliable, not
+   what is proved to cause it.
 4. The designed gate is **not** the active ingredient: with three seeds, freezing the gate
    leaves +1.12 +- 0.57 and a frozen random spectrum leaves +1.36 +- 0.76, both inside the
    spread of +1.75 +- 0.74 on that same three-seed subset.
