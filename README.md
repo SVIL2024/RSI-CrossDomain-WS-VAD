@@ -12,11 +12,11 @@ lowest-scoring frames of source-normal features in the frequency domain and inje
 through a normalised, RMS-matched spectral field.
 
 The paper's contribution is an attribution study rather than a new state of the art. It
-isolates what actually transfers: the *structure* of the field — a smooth, low-pass
+isolates what actually transfers: the *structure* of the field — a rank-1, RMS-matched
 perturbation aimed at the hardest source frames — and not the semantic content of the
-direction, the shape of the gate, or the rank of the perturbation. The same field is
-actively harmful on a second backbone (RTFM), reported as a negative result rather than
-hidden.
+direction or the shape of the gate. "Structure" here means rank-1 sharing, not smoothness by
+itself: an equally smooth field of full rank returns the baseline. The same field is actively
+harmful on a second backbone (RTFM), reported as a negative result rather than hidden.
 
 ## Repository structure
 
@@ -298,24 +298,31 @@ R1--R4 are the E3 method with one knob changed. There are no separate variant ID
 
 1. Over five seeds the field moves pooled AUC on XD->UCF from 0.7818 +- 0.0118 to
    0.7958 +- 0.0185, a paired gain of **+1.40 +- 0.86** (5/5 seeds, exact one-sided sign test
-   p = 0.031, bootstrap 95% CI [+0.74, +2.04]). The gain comes from the **injection scaffold**
-   -- a smooth, RMS-matched spectral field aimed at the hardest source frames -- and not from
+   p = 0.031, bootstrap 95% CI [+0.69, +2.04]). The gain comes from the **injection scaffold**
+   -- a rank-1, RMS-matched spectral field aimed at the hardest source frames -- and not from
    the semantic content of the direction.
 2. CLIP text class directions perform at baseline when used as perturbation directions
-   (+0.22 +- 0.49 over E5, CI [-0.16, +0.64]), and the field built from a random rank-1
+   (+0.22 +- 0.49 over E5, CI [-0.15, +0.65]), and the field built from a random rank-1
    direction beats the text-direction field by +1.19 +- 1.02 (5/5, p = 0.031). The assumption
    that text directions carry transferable anomaly semantics does not survive the attribution.
-3. Neither the designed gate nor the rank of the perturbation is the active ingredient: with
-   three seeds, freezing the gate leaves +1.12 +- 0.57 and a frozen random spectrum leaves
-   +1.36 +- 0.76, and a rank-1 direction explains only +0.34 +- 0.50 once frame selection is
-   accounted for.
-4. The transfer is not XD/UCF-specific: training on UCF and evaluating on XD moves AP2 by
-   +1.66 over the released UCF baseline (66.14 vs 64.48).
-5. The effect does **not** generalise to a second backbone: on RTFM (30 epochs, three seeds)
+3. Two structures are load-bearing, and five seeds separate them: the shared rank-1 direction
+   (+1.47 +- 2.05 against the full method, 5/5, p = 0.031, CI [+0.22, +3.28], one run
+   dominating the mean) and the lowest-score frame-selection rule (+1.00 +- 1.05, 4/5,
+   p = 0.19, CI [+0.22, +1.87]). Destroying the rank-1 structure while keeping the envelope
+   (smooth full-rank noise) returns the baseline (-0.07 +- 2.22), so smoothness alone is not
+   enough.
+4. The designed gate is **not** the active ingredient: with three seeds, freezing the gate
+   leaves +1.12 +- 0.57 and a frozen random spectrum leaves +1.36 +- 0.76, both inside the
+   spread of +1.75 +- 0.74 on that same three-seed subset.
+5. The transfer is not XD/UCF-specific: training on UCF and evaluating on XD moves AP2 by
+   +1.66 over the released UCF baseline (66.14 vs 64.48); on the class-agnostic head the same
+   direction loses -3.24 (57.83 -> 54.59), so the two heads disagree in sign and no gain is
+   claimed there.
+6. The effect does **not** generalise to a second backbone: on RTFM (30 epochs, three seeds)
    the same field costs -7.9 pooled AUC1 (range -3.8 to -11.8), because RTFM's single head
    selects its top-k segments by magnitude and the energy-matched field corrupts exactly that
    statistic, while VadCLIP's second, text-anchored head does not.
-6. The hardest target (ShanghaiTech) exhibits a between-video style shift that dominates the
+7. The hardest target (ShanghaiTech) exhibits a between-video style shift that dominates the
    pooled metric: a trivial magnitude cue reaches 0.86 within-video AUC while pooling below
    chance, and every arm sits below chance in both protocols.
 
