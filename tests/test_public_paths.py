@@ -39,7 +39,7 @@ ENTRYPOINTS = (
     'precondition_test',
     # second backbone (Section 4.5) and the seed statistics
     'rtfm_model', 'rtfm_eval', 'xd_train_rtfm', 'rtfm_cross_eval',
-    'seed_stats', 'five_seed_stats',
+    'seed_stats', 'five_seed_stats', 'six_seed_stats',
 )
 
 PATH_HELPERS = ('env_path', 'data_root', 'sht_root', 'sht_feat_root',

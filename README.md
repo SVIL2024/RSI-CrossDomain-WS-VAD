@@ -46,7 +46,7 @@ harmful on a second backbone (RTFM), reported as a negative result rather than h
 │   ├── xd_train_rtfm.py          # RTFM training entrypoint (same recipe as xd_train.py)
 │   ├── rtfm_cross_eval.py        # RTFM cross-domain evaluation
 │   ├── seed_stats.py             # Aggregates runs/cross_eval_*.json into per-arm statistics
-│   ├── five_seed_stats.py        # Reproduces every number quoted in the paper's tables
+│   ├── six_seed_stats.py        # Reproduces every number quoted in the paper's tables
 │   ├── precondition_test.py      # Precondition-probe diagnostic
 │   ├── analysis_crossdomain_transfer.py  # Direction transferability diagnostic
 │   ├── analysis_spectral_bands.py         # Temporal band diagnostic (H2)
@@ -205,13 +205,13 @@ seeds), which is why the paper reports the negative result as a sign rather than
 
 ### Seed statistics
 
-`five_seed_stats.py` reproduces every mean, standard deviation, paired difference, exact
+`six_seed_stats.py` reproduces every mean, standard deviation, paired difference, exact
 one-sided sign test and percentile bootstrap interval quoted in the paper. Its input is the
 per-seed pooled AUC1 values printed by `cross_eval.py`, hard-coded so the file doubles as a
 record of what was run:
 
 ```bash
-python src/five_seed_stats.py
+python src/six_seed_stats.py
 ```
 
 `seed_stats.py` does the same aggregation directly from `runs/cross_eval_*.json`, which is what
@@ -297,27 +297,32 @@ R1--R4 are the E3 method with one knob changed. There are no separate variant ID
 ## Key findings
 
 1. Over six seeds the field moves pooled AUC on XD->UCF from 0.7766 +- 0.0165 to
-   0.7928 +- 0.0182, a paired gain of **+1.61 +- 0.93** (6/6 seeds, exact one-sided sign test
-   p = 0.016, bootstrap 95% CI [+0.91, +2.26]). The sixth seed (777) was fixed before it was
-   run and reported whatever it showed. The gain comes from the **injection scaffold** -- an
-   RMS-matched spectral field aimed at the hardest source frames -- and not from the semantic
-   content of the direction.
-2. CLIP text class directions perform at baseline when used as perturbation directions
-   (+0.22 +- 0.49 over E5, CI [-0.15, +0.65]), and the field built from a random rank-1
-   direction beats the text-direction field by +1.19 +- 1.02 (5/5, p = 0.031). The assumption
-   that text directions carry transferable anomaly semantics does not survive the attribution.
-3. Where the field lands is load-bearing; whether its direction must be shared is not
-   resolved. Destroying the lowest-score frame-selection rule leaves only +0.40 +- 0.66 of the
-   gain (+1.00 +- 1.05 as a paired difference against the full method, 4/5, p = 0.19,
-   CI [+0.22, +1.87]). Replacing the shared rank-1 direction with per-dimension noise of the
-   same envelope and energy (N2) is not separable from the full method (+0.91 +- 2.30 against
-   it, 5/6, p = 0.11, CI [-0.60, +2.74], within 0.1 AUC in two runs and 1.9 ahead in one) but
-   is far less stable (spread 2.75 against 0.93), and N2 is no better than the baseline
-   (+0.71 +- 2.75). Read plainly: the shared direction is what makes the effect reliable, not
-   what is proved to cause it.
+   0.7919 +- 0.0179, a paired gain of **+1.52 +- 0.91** (6/6 seeds, exact one-sided sign test
+   p = 0.016, bootstrap 95% CI [+0.85, +2.17]); a video-level bootstrap over the 290 test
+   videos gives [+0.46, +2.66], and the interval for any single run is two to three points
+   wide, i.e. wider than the effect itself. The sixth seed (777) was fixed before it was run and reported whatever it showed.
+   The gain comes from the **injection scaffold** -- an RMS-matched spectral field aimed at
+   the hardest source frames -- and not from the semantic content of the direction.
+2. CLIP text class directions are close to useless as perturbation directions: +0.69 +- 1.24
+   over E5 (CI [-0.03, +1.72]), and the field built from a random rank-1 direction beats the
+   text-direction field by +0.83 +- 0.99 (5/6). The advantage is a matter of degree, not of
+   kind: both variants gain, and what separates them is that E1 gains mostly on weak baselines
+   (correlation between baseline AUC and gain -0.77) while E3's gain is independent of baseline
+   strength (-0.12). The assumption that text directions carry transferable anomaly semantics
+   does not survive the attribution.
+3. What the controls establish is narrower than what the mechanism was named for. Destroying
+   the lowest-score placement rule leaves +0.79 +- 1.12 of the gain (+0.73 +- 0.95 as a paired
+   difference against the full method, 4/6, p = 0.34); replacing the shared rank-1 direction
+   with per-dimension noise of the same envelope and energy (N2) is not separable
+   (+0.82 +- 2.35 against it, 4/6, p = 0.34) but is far less stable (spread 2.35 against 0.91)
+   and no better than the baseline (+0.71 +- 2.75); a contiguous window instead of the rank
+   gathering is also not separable (+0.35 +- 0.86). So no single component is proved to carry
+   the effect. What the data do support is reliability: E3 is the only variant whose gain
+   survives every seed and does not come from rescuing weak baselines.
 4. The designed gate is **not** the active ingredient: with three seeds, freezing the gate
    leaves +1.12 +- 0.57 and a frozen random spectrum leaves +1.36 +- 0.76, both inside the
-   spread of +1.75 +- 0.74 on that same three-seed subset.
+   spread of the three-run estimate of the full method, so the sweep bounds sensitivity rather
+   than locating an optimum.
 5. The transfer is not XD/UCF-specific: training on UCF and evaluating on XD moves AP2 by
    +1.66 over the released UCF baseline (66.14 vs 64.48); on the class-agnostic head the same
    direction loses -3.24 (57.83 -> 54.59), so the two heads disagree in sign and no gain is
