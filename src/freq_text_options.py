@@ -59,6 +59,29 @@ VARIANTS = {
     'E3b': dict(aug_weight=1.0, aug_mode='shift', aug_freq_gate=True,
                 aug_direction='random', aug_exclude_dc=True,
                 aug_gate_learnable=False, aug_gate_random=True),
+    # E3c: random-frame-selection control - identical scaffold to E3, but the
+    #      basis block is a uniformly random subset of the clip instead of the
+    #      lowest-scoring frames. Isolates the Stage-1 selection rule: if E3c
+    #      matches E3, "hard negatives" is not what the selection buys.
+    'E3c': dict(aug_weight=1.0, aug_mode='shift', aug_freq_gate=True,
+                aug_direction='random', aug_exclude_dc=True,
+                aug_frame_select='random'),
+    # N2: temporally smooth but full-rank control - each feature dimension gets
+    #     its own band-limited random temporal field (same gate profile as the
+    #     spectral modes, frozen). Temporal correlation matches E3; the rank-1
+    #     shared direction is destroyed. Next to N1 (temporally white, full-rank)
+    #     and E3 (temporally smooth, rank-1) it separates temporal correlation
+    #     from rank-1 in the structure-vs-energy attribution.
+    'N2': dict(aug_weight=1.0, aug_mode='smooth_noise', aug_freq_gate=True,
+               aug_direction='random', aug_exclude_dc=True,
+               aug_gate_learnable=False),
+    # E3w: contiguous-window control - E3 with the basis block placed as one
+    #      contiguous run centred on the lowest-scoring frame instead of being
+    #      gathered by rank. Holds hardness fixed and varies only contiguity,
+    #      which is the axis Stage 1 argues for but never tests.
+    'E3w': dict(aug_weight=1.0, aug_mode='shift', aug_freq_gate=True,
+                aug_direction='random', aug_exclude_dc=True,
+                aug_frame_select='contiguous'),
 }
 
 VARIANT_HELP = {
@@ -71,6 +94,10 @@ VARIANT_HELP = {
     'N1': 'plain iid-noise control, RMS-matched (no direction, no spectral structure)',
     'E3a': 'frozen structured gate, random direction (isolates gate adaptivity)',
     'E3b': 'frozen random spectrum, random direction (null model for the gate)',
+    'E3c': 'random-frame selection, random direction (null model for Stage-1 selection)',
+    'N2': 'temporally smooth full-rank noise (decouples temporal correlation from rank-1)',
+    'E3w': 'contiguous-window selection centred on the hardest frame '
+           '(single-variable contrast with E3 on contiguity)',
 }
 
 
@@ -93,6 +120,7 @@ AUG_DEFAULTS = dict(
     aug_band_gain=1.0,
     aug_gate_learnable=True,
     aug_gate_random=False,
+    aug_frame_select='lowest',
 )
 
 _BOOL = lambda s: str(s).lower() in ('1', 'true', 'yes', 'y', 'on')
@@ -106,9 +134,11 @@ def add_augment_arguments(parser):
                    help='ablation id: ' + '; '.join(f'{k}={VARIANT_HELP[k]}' for k in sorted(VARIANTS)))
     g.add_argument('--aug-weight', default=None, type=float,
                    help='0 disables the branch; 1.0 = the document weight')
-    g.add_argument('--aug-mode', default=None, choices=['shift', 'band', 'timedomain'],
+    g.add_argument('--aug-mode', default=None,
+                   choices=['shift', 'band', 'timedomain', 'smooth_noise'],
                    help="shift = the document's additive spectrum; band = "
-                        'multiplicative band gain; timedomain = constant offset')
+                        'multiplicative band gain; timedomain = constant offset; '
+                        'smooth_noise = temporally band-limited full-rank noise (N2)')
     g.add_argument('--aug-freq-gate', default=None, type=_BOOL,
                    help='False freezes the gate at its neutral value')
     g.add_argument('--aug-direction', default=None, choices=['text', 'random'],
@@ -138,6 +168,11 @@ def add_augment_arguments(parser):
     g.add_argument('--aug-gate-random', default=None, type=_BOOL,
                    help='True initialises the gate from fixed random noise instead '
                         'of Gaussian bumps (E3b null model)')
+    g.add_argument('--aug-frame-select', default=None,
+                   choices=['lowest', 'random', 'contiguous'],
+                   help='which frames form the basis block: lowest = bottom-score '
+                        '(default), random = E3c control, contiguous = E3w control '
+                        '(one run centred on the lowest-scoring frame)')
     return parser
 
 

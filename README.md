@@ -263,7 +263,7 @@ python src/precondition_test.py               # precondition-probe diagnostic
 ### Tests
 
 ```bash
-python -m pytest tests/ -q      # 85 tests: augmenter units, training protocol, path API
+python -m pytest tests/ -q      # 96 tests: augmenter units, training protocol, path API
 ```
 
 ## Variants
@@ -276,6 +276,9 @@ python -m pytest tests/ -q      # 85 tests: augmenter units, training protocol, 
 | E3a | E3 with the designed gate frozen at initialisation |
 | E3b | E3 with a frozen random spectrum (destroys the designed band shape) |
 | N1 | Plain i.i.d. noise control (RMS-matched, no structure) |
+| E3c | E3 with the basis block drawn uniformly at random instead of by score (`--aug-frame-select random`) |
+| E3w | E3 with the basis block as one contiguous run centred on the hardest frame (`--aug-frame-select contiguous`) |
+| N2 | Temporally smooth **full-rank** noise: each feature dimension gets its own band-limited field (same envelope as E3, rank-1 sharing destroyed) |
 | B1 | Multiplicative band gain (non-degenerate spectral form) |
 | E4 | Gate frozen flat (degenerate) |
 | E2 | Time-domain fallback (degenerate) |

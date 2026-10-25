@@ -240,9 +240,9 @@ class FreqTextAugmenter(nn.Module):
                  direction_source: str = 'text', seed: int = 234,
                  gate_learnable: bool = True, gate_random: bool = False):
         super().__init__()
-        if mode not in ('shift', 'band', 'timedomain', 'noise'):
+        if mode not in ('shift', 'band', 'timedomain', 'noise', 'smooth_noise'):
             raise ValueError(f"unknown mode '{mode}', expected 'shift', 'band', "
-                             f"'timedomain' or 'noise'")
+                             f"'timedomain', 'noise' or 'smooth_noise'")
         if direction_source not in ('text', 'random'):
             raise ValueError(f"unknown direction_source '{direction_source}'")
         if delta_norm not in ('relative', 'absolute'):
@@ -324,7 +324,7 @@ class FreqTextAugmenter(nn.Module):
         afterwards, in that order; the reverse order re-introduces an offset.
         """
         g = self.gate()
-        if self.mode in ('shift', 'timedomain') and self.exclude_dc:
+        if self.mode in ('shift', 'timedomain', 'smooth_noise') and self.exclude_dc:
             g = g.clone()
             g[0] = 0.0
             if g.numel() > 1:
@@ -399,6 +399,20 @@ class FreqTextAugmenter(nn.Module):
             # matching below are identical to the spectral modes, so the only
             # difference vs E3 is the structure of the injected delta.
             delta = torch.randn(B, K, C, device=x.device, dtype=x.dtype)
+        elif self.mode == 'smooth_noise':
+            # N2: the temporally-smooth FULL-RANK control. Each feature dimension
+            # gets its own band-limited random temporal field: white noise is
+            # filtered per dimension by the same gate profile the spectral modes
+            # use (DC zeroed, non-DC mean removed), so the injected field is
+            # temporally correlated exactly like E3's envelope while the rank-1
+            # shared direction is destroyed - every dimension moves along its own
+            # independent smooth trajectory. Next to N1 (temporally white,
+            # full-rank) and E3 (temporally smooth, rank-1) it separates the two
+            # candidate active ingredients of the "structure" claim.
+            white = torch.randn(B, self.n_fft, C, device=x.device, dtype=x.dtype)
+            spec = torch.fft.rfft(white, dim=1)
+            delta = torch.fft.irfft(spec * profile.view(1, -1, 1),
+                                    n=self.n_fft, dim=1)[:, :K]
         elif self.mode == 'timedomain':
             # E2: the document's fallback - no spectral step at all, every selected
             # frame gets the same offset along d. Provided so the "frequency
@@ -436,7 +450,7 @@ class FreqTextAugmenter(nn.Module):
 # ---------------------------------------------------------------------------
 def augment_sequence(feats: torch.Tensor, direction: torch.Tensor, augmenter: 'FreqTextAugmenter',
                      scores: torch.Tensor = None, ratio: float = 0.2, lengths=None,
-                     alpha=None, generator=None):
+                     alpha=None, generator=None, frame_select: str = 'lowest'):
     """Apply the augmenter to the selected frames of a full sequence.
 
     Args:
@@ -445,7 +459,11 @@ def augment_sequence(feats: torch.Tensor, direction: torch.Tensor, augmenter: 'F
         augmenter: the module.
         scores: ``(B, T)`` frame scores used to pick the basis frames. If None the
             first ``K`` frames of each video are used (deterministic smoke mode).
-        ratio: bottom-score fraction.
+        ratio: bottom-score fraction. ``frame_select`` picks the block:
+            'lowest' (default, gather by rank), 'random' (E3c, uniform
+            subset) or 'contiguous' (E3w, one run centred on the
+            lowest-scoring frame). All three return the same (B, k)
+            contract with an identical k.
         lengths: ``(B,)`` valid lengths.
         alpha: optional fixed strength.
         generator: unused hook kept for reproducibility experiments.
@@ -466,6 +484,33 @@ def augment_sequence(feats: torch.Tensor, direction: torch.Tensor, augmenter: 'F
         k = int(min(T, max(5, round(T * ratio))))
         idx = torch.arange(k, device=dev).unsqueeze(0).expand(B, -1).contiguous()
         valid = torch.arange(k, device=dev).unsqueeze(0) < lengths.unsqueeze(1)
+    elif frame_select == 'random':
+        # E3c: a uniformly random subset of the valid frames, same size as the
+        # bottom-score block. Fresh uniform scores make lowest_score_indices
+        # pick a random subset, and the padding guard inside it keeps working
+        # unchanged. Uses the global torch RNG, so a run is reproducible from
+        # its --seed like every other stochastic component.
+        idx, valid, _ = lowest_score_indices(
+            torch.rand(B, T, device=dev), ratio=ratio, lengths=lengths)
+    elif frame_select == 'contiguous':
+        # E3w: contiguous-window control. Same block size K as the bottom-score
+        # branch, but placed as one contiguous run CENTRED ON THE LOWEST-SCORING
+        # FRAME. Hardness is therefore held fixed with respect to E3 and the only
+        # difference is contiguity -- the axis Stage 1 argues for but never tests.
+        # K uses the same expression as lowest_score_indices so the block length
+        # matches E3 exactly; if the two ever diverged the arm would stop being a
+        # single-variable contrast. See c8a_contiguous_arm.md.
+        k = int(min(T, max(5, round(T * ratio))))
+        valid_t = torch.arange(T, device=dev).unsqueeze(0) < lengths.unsqueeze(1)
+        # padding -> +inf so argmin never lands on a padded position
+        pos = scores.masked_fill(~valid_t, float('inf')).argmin(dim=1)
+        # keep the whole window inside [0, L): clamp the start twice rather than
+        # wrapping, so a sample shorter than K degrades to the same padded tail
+        # the other branches produce instead of silently wrapping around.
+        start = (pos - k // 2).clamp(min=0)
+        start = torch.minimum(start, (lengths - k).clamp(min=0))
+        idx = start.unsqueeze(1) + torch.arange(k, device=dev).unsqueeze(0)
+        valid = idx < lengths.unsqueeze(1)
     else:
         idx, valid, _ = lowest_score_indices(scores, ratio=ratio, lengths=lengths)
 
@@ -621,7 +666,8 @@ def augment_and_score(model, augmenter, dirs, visual_feats, feat_lengths,
     fixed = None if alpha <= 0.0 else torch.tensor(alpha, device=dev)
     aug_feats, mask, alpha = augment_sequence(
         feats_sel, d, augmenter, scores=logits_ref, ratio=getattr(cfg, 'aug_ratio', 0.2),
-        lengths=len_sel, alpha=fixed)
+        lengths=len_sel, alpha=fixed,
+        frame_select=getattr(cfg, 'aug_frame_select', 'lowest'))
 
     _, logits1_aug, _ = model(aug_feats, None, prompt_text, len_sel)
     scores_aug = logits1_aug.squeeze(-1).float()

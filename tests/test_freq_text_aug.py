@@ -433,3 +433,101 @@ if __name__ == '__main__':
             print(f'  FAIL  {name}: {type(exc).__name__}: {exc}')
     print(f'\n{len(tests) - len(failed)}/{len(tests)} passed')
     sys.exit(1 if failed else 0)
+
+
+# --------------------------------------------------------------------------
+# N2 / E3c / E3w: the three controls the cross-seed attribution relies on
+# --------------------------------------------------------------------------
+def test_smooth_noise_is_smooth_fullrank_and_rms_matched():
+    """N2: band-limited per-dimension noise. Temporal correlation must match the
+    spectral modes' envelope (lag-1 clearly positive, unlike N1's white noise),
+    the field must stay full-rank (unlike E3's rank-1), and the shared relative
+    RMS matching must pin the magnitude."""
+    torch.manual_seed(0)
+    K = 33
+    block = torch.randn(2, K, C) * 5.0
+
+    def lag1(delta):
+        d = delta[0].float()
+        d = d - d.mean(0, keepdim=True)
+        num = (d[:-1] * d[1:]).mean()
+        den = d.var(dim=0, unbiased=False).mean() + 1e-12
+        return float(num / den)
+
+    a_n1 = _aug(block_len=K, mode='noise', delta_norm='relative')
+    out_n1, _ = a_n1(block, torch.randn(C))
+    a_n2 = _aug(block_len=K, mode='smooth_noise', delta_norm='relative')
+    out_n2, _ = a_n2(block, torch.randn(C))
+
+    d1, d2 = out_n1 - block, out_n2 - block
+    for d in (d1, d2):
+        r = float(d.pow(2).mean().sqrt() / block.pow(2).mean().sqrt())
+        assert abs(r - 1.0) < 0.15, r
+    assert lag1(d2) > 0.3, lag1(d2)
+    assert abs(lag1(d1)) < 0.2, lag1(d1)
+    assert torch.linalg.matrix_rank(d2[0], tol=1e-3) >= K - 1
+
+
+def test_smooth_noise_ignores_direction_and_is_frozen():
+    """N2 carries no direction semantics and its gate does not learn: the variant
+    table freezes it so the control cannot adapt while being compared to E3."""
+    K = 16
+    a = _aug(block_len=K, mode='smooth_noise', delta_norm='relative',
+             gate_learnable=False)
+    assert a.freq_gate.requires_grad is False
+    block = torch.randn(1, K, C)
+    torch.manual_seed(0)
+    out1, _ = a(block, torch.randn(C))
+    torch.manual_seed(0)
+    out2, _ = a(block, torch.randn(C) * 3.0 + 1.0)
+    assert torch.allclose(out1, out2)
+
+
+def test_random_frame_select_changes_the_subset_but_keeps_size_and_validity():
+    """E3c: same block width k as bottom-score selection, the selection differs,
+    and frames outside the mask stay bitwise unchanged."""
+    TT, K = 32, 8
+    feats = torch.randn(2, TT, C)
+    lengths = torch.tensor([TT, 20])
+    scores = torch.arange(TT, dtype=torch.float32).unsqueeze(0).expand(2, -1).clone()
+    a = _aug(block_len=K, mode='shift', delta_norm='relative')
+
+    torch.manual_seed(0)
+    _, mask_low, _ = augment_sequence(feats, torch.randn(C), a, scores=scores,
+                                      ratio=0.25, lengths=lengths)
+    torch.manual_seed(1)
+    rnd, mask_rnd, _ = augment_sequence(feats, torch.randn(C), a, scores=scores,
+                                        ratio=0.25, lengths=lengths,
+                                        frame_select='random')
+    k = max(5, round(TT * 0.25))
+    assert int(mask_low[0].sum()) == int(mask_rnd[0].sum()) == k
+    assert int(mask_rnd[1].sum()) == k
+    assert not torch.equal(mask_low, mask_rnd)
+    same = ~mask_rnd
+    assert torch.equal(feats[same], rnd[same])
+
+
+def test_contiguous_frame_select_returns_one_run_around_the_hardest_frame():
+    """E3w: same width k, but a single contiguous run centred on the
+    lowest-scoring frame rather than frames gathered by rank."""
+    TT, K = 32, 8
+    feats = torch.randn(2, TT, C)
+    lengths = torch.tensor([TT, TT])
+    scores = torch.full((2, TT), 10.0)
+    scores[0, 16] = 0.0
+    scores[1, 3] = 0.0
+    a = _aug(block_len=K, mode='shift', delta_norm='relative')
+
+    out, mask, _ = augment_sequence(feats, torch.randn(C), a, scores=scores,
+                                    ratio=0.25, lengths=lengths,
+                                    frame_select='contiguous')
+    k = max(5, round(TT * 0.25))
+    assert int(mask[0].sum()) == k and int(mask[1].sum()) == k
+    for b, centre in ((0, 16), (1, 3)):
+        idx = mask[b].nonzero().view(-1)
+        assert torch.all(torch.diff(idx) == 1), idx          # one contiguous run
+        start = int(idx[0])
+        assert start <= centre < start + k, (start, centre)   # the run covers it
+        assert start == min(max(centre - k // 2, 0), TT - k)
+    same = ~mask
+    assert torch.equal(feats[same], out[same])
